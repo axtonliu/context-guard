@@ -1,0 +1,13 @@
+{
+  "name": "axtonliu-mods",
+  "owner": {
+    "name": "Axton Liu"
+  },
+  "plugins": [
+    {
+      "name": "context-guard",
+      "source": "./"
+    }
+  ],
+  "description": "Claude Code mods by Axton Liu"
+}

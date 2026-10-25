@@ -1,0 +1,12 @@
+{
+  "name": "context-guard",
+  "version": "0.2.2",
+  "description": "Warns before the context fills up; one click writes a work log, compacts, then resumes from the log. 上下文快满时提醒，一键写日志、压缩、从日志接着干。",
+  "types": "./types/index.d.ts",
+  "author": {
+    "name": "Axton Liu",
+    "url": "https://github.com/axtonliu"
+  },
+  "homepage": "https://github.com/axtonliu/context-guard",
+  "license": "MIT"
+}
