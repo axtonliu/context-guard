@@ -20,6 +20,7 @@ export const EMPTY_VIEW: GuardView = {
   isError: false,
   logPath: null,
   instructions: null,
+  isQueued: false,
   trace: [],
 }
 
@@ -151,9 +152,13 @@ export function isCompactUnavailable(error: string): boolean {
 const RESUME_TAIL =
   '（context-guard 在压缩后自动发出）恢复上下文后，先用几句话确认你掌握的当前状态和下一步，然后直接按原计划继续执行未完成项，不要停下来等我。只有原计划已经全部完成、或下一步必须由我拍板时，才停下等我的指令。'
 
+const PASTE_NOTE = /粘贴|\/clear/
+
 /**
- * The prompt sent after a compaction: the log's own 恢复会话 section as written (without its
- * "paste this after /clear" note), or a pointer to it when the section is missing.
+ * The prompt sent after a compaction: the log's own 恢复会话 section as written (without the
+ * "paste this after /clear" note that opens it), or a pointer to it when the section is missing.
+ * Quotes elsewhere in the section are the log's own words and stay, and a heading inside a
+ * code block does not end the section.
  */
 export function resumePrompt(logText: string | null, logPath: string): string {
   const lines = (logText ?? '').split('\n')
@@ -161,9 +166,16 @@ export function resumePrompt(logText: string | null, logPath: string): string {
   let body = ''
   if (start !== -1) {
     const rest = lines.slice(start + 1)
-    const end = rest.findIndex(l => /^#{1,2}\s/.test(l))
-    body = (end === -1 ? rest : rest.slice(0, end))
-      .filter(l => !l.startsWith('>'))
+    let isFenced = false
+    const end = rest.findIndex(l => {
+      if (/^\s*(```|~~~)/.test(l)) isFenced = !isFenced
+      return !isFenced && /^#{1,2}\s/.test(l)
+    })
+    const section = end === -1 ? rest : rest.slice(0, end)
+    const first = section.findIndex(l => l.trim() !== '')
+    const isNote = first !== -1 && section[first]!.startsWith('>') && PASTE_NOTE.test(section[first]!)
+    body = section
+      .filter((_, i) => !(isNote && i === first))
       .join('\n')
       .trim()
   }

@@ -87,6 +87,11 @@ async function fail($: $, message: string): Promise<void> {
   $.ui.toast(`context-guard：${message}`, { timeoutMs: 8000 })
 }
 
+/** Whether the flow `nonce` started is still the one running, i.e. nobody pressed 取消 since. */
+async function isCurrent($: $, nonce: string | null): Promise<boolean> {
+  return nonce !== null && (await read($, view)).nonce === nonce
+}
+
 async function startLogging($: $): Promise<void> {
   const v = await read($, view)
   if (v.phase !== 'idle') return
@@ -101,14 +106,15 @@ async function startLogging($: $): Promise<void> {
     message: null,
     isError: false,
     instructions: null,
+    isQueued: false,
   }))
   await note($, `press: nonce=${nonce}`)
   try {
     const sent = await $.prompt.submit({ text: logPrompt(nonce, v.percent) })
     await note($, `prompt.submit resolved${sent.drop !== undefined ? ` drop=${sent.drop}` : ''}`)
-    if (sent.drop !== undefined) await fail($, `写日志的消息被拦下：${sent.drop}`)
+    if (sent.drop !== undefined && (await isCurrent($, nonce))) await fail($, `写日志的消息被拦下：${sent.drop}`)
   } catch (err) {
-    await fail($, `写日志的消息没有发出去：${String(err)}`)
+    if (await isCurrent($, nonce)) await fail($, `写日志的消息没有发出去：${String(err)}`)
   }
 }
 
@@ -128,6 +134,10 @@ async function finishLogging($: $, answer: string, isAnswered: boolean): Promise
     await note($, `fs.stat failed: ${String(err)}`)
     return undefined
   })
+  if (!(await isCurrent($, v.nonce))) {
+    await note($, 'cancelled while the log was checked')
+    return
+  }
   await note($, `fs.stat ${report.log}: ${stat === undefined ? 'none' : `${stat.kind} mtime=${stat.mtimeMs} pressedAt=${v.pressedAt}`}`)
   if (stat === undefined || stat.kind !== 'file') {
     await fail($, `日志文件不存在：${report.log}，未压缩`)
@@ -137,13 +147,14 @@ async function finishLogging($: $, answer: string, isAnswered: boolean): Promise
     await fail($, `日志文件不是这次写的（修改时间早于点击）：${report.log}，未压缩`)
     return
   }
+  // The nonce stays: it names this flow until it ends, so a 取消 can be told from it.
   await update($, view, old => ({
     ...old,
     phase: 'compacting' as const,
     logTurnId: null,
-    nonce: null,
     logPath: report.log,
     instructions: compactInstructions(report),
+    isQueued: false,
   }))
   await note($, 'log verified, compaction pending')
 }
@@ -163,22 +174,23 @@ async function pollCompact($: $): Promise<void> {
   isPolling = true
   try {
     const v = await read($, view)
-    if (v.phase !== 'compacting' || v.instructions === null) {
+    if (v.phase !== 'compacting' || v.instructions === null || v.isQueued === true) {
       refusals = 0
       return
     }
-    await tryCompact($, v.instructions)
+    await tryCompact($, v.instructions, v.nonce)
   } finally {
     isPolling = false
   }
 }
 
-async function tryCompact($: $, instructions: string): Promise<void> {
+async function tryCompact($: $, instructions: string, nonce: string | null): Promise<void> {
   let result
   try {
     result = await $.session.compact({ instructions })
     await note($, `compact resolved: ${result.skip !== undefined ? `skip=${result.skip}` : `${result.tokensBefore ?? '?'} -> ${result.tokensAfter ?? '?'}`}`)
   } catch (err) {
+    if (!(await isCurrent($, nonce))) return
     refusals += 1
     const why = String(err)
     if (why !== lastRefusal) {
@@ -188,20 +200,29 @@ async function tryCompact($: $, instructions: string): Promise<void> {
     }
     if (refusals === FALLBACK_AFTER || (isCompactUnavailable(why) && refusals === 1)) {
       await note($, 'falling back to /compact through $.command.run')
-      // Clearing the instructions stops the poller, so the queued /compact is the only one;
-      // the session.compact hook still sees phase compacting and finishes the flow.
+      // isQueued stops the poller, so the queued /compact is the only one; the session.compact
+      // hook still sees phase compacting and finishes the flow. The instructions stay for an
+      // automatic compaction that may come first.
       refusals = 0
       lastRefusal = ''
-      await update($, view, old => ({ ...old, instructions: null, message: '改用 /compact 排队执行，会话空闲时开始' }))
+      await update($, view, old => ({ ...old, isQueued: true, message: '改用 /compact 排队执行，会话空闲时开始' }))
       // Settles once the queued /compact has run; the session.compact hook records the outcome.
       void $.command.run({ command: 'compact', args: instructions }).catch(async (e: unknown) => {
-        await fail($, `/compact 也没能执行：${String(e)}`)
+        if (await isCurrent($, nonce)) await fail($, `/compact 也没能执行：${String(e)}`)
       })
     }
     return
   }
   refusals = 0
   lastRefusal = ''
+  if (!(await isCurrent($, nonce))) {
+    // 取消 came while the compaction ran: it stands, but the flow stops here.
+    if (result.skip === undefined) {
+      await note($, 'compacted after 取消, no resume')
+      await update($, view, old => ({ ...old, message: '取消时压缩已经开始，已压缩完成；不会自动发恢复 prompt', isError: false }))
+    }
+    return
+  }
   if (result.skip !== undefined) {
     await fail($, `压缩被跳过：${result.skip}`)
     return
@@ -236,6 +257,26 @@ async function sendResume($: $, logPath: string): Promise<void> {
   void $.prompt.submit({ text: resumePrompt(text, logPath), asUser: true }).catch(async (err: unknown) => {
     await note($, `resume prompt failed: ${String(err)}`)
   })
+}
+
+/**
+ * 取消: the flow stops and sends nothing more. A /compact already queued cannot be withdrawn,
+ * so it still runs, but as someone else's compaction: no recovery prompt follows.
+ */
+async function cancel($: $): Promise<void> {
+  refusals = 0
+  lastRefusal = ''
+  await update($, view, old => ({
+    ...old,
+    phase: 'idle' as const,
+    instructions: null,
+    nonce: null,
+    logTurnId: null,
+    isQueued: false,
+    message: old.isQueued === true ? '已取消：排队的 /compact 撤不回，仍会在会话空闲时执行，但压缩后不会自动发恢复 prompt' : null,
+    isError: false,
+  }))
+  await note($, 'cancelled')
 }
 
 async function statusText($: $): Promise<string> {
@@ -344,6 +385,12 @@ export const register: Register = on => {
   on('session.compact', async ($, e, next) => {
     if (e.agentId !== undefined || e.trigger === 'precompute') return next(e)
     const s = await read($, settings)
+    const flow = await read($, view)
+    if (e.trigger === 'auto' && flow.phase === 'logging') {
+      // Compacting now would cut the log turn short; once it ends, the compaction carries the log.
+      await note($, 'automatic compaction skipped while the log is written')
+      return { skip: 'context-guard 正在写工作日志，先跳过这次自动压缩，日志写完会自动压缩' }
+    }
     if (e.trigger === 'auto' && s.interceptAuto && s.isEnabled && !(await read($, autoSkipped))) {
       // Once per session only, so a full context still compacts on the next try.
       await update($, autoSkipped, () => true)
@@ -354,7 +401,9 @@ export const register: Register = on => {
       }))
       return { skip: 'context-guard 拦下了这次自动压缩，先写日志再压缩（只拦一次）' }
     }
-    const result = await next(e)
+    // An automatic compaction while ours is pending does its job: it tells the summarizer about the log.
+    const isPending = e.trigger === 'auto' && flow.phase === 'compacting' && flow.instructions !== null
+    const result = await next(isPending ? { ...e, instructions: flow.instructions ?? undefined } : e)
     if (result.skip === undefined && e.trigger !== 'plugin') {
       const v = await read($, view)
       if (v.phase === 'compacting') {
@@ -386,10 +435,12 @@ export const register: Register = on => {
           <Text color="warning">
             {v.phase === 'logging'
               ? 'context-guard：正在写工作日志，这一轮结束后自动压缩'
-              : 'context-guard：日志已落盘，正在压缩'}
-            {v.phase === 'compacting' && v.message !== null ? `（${v.message}）` : ''}
+              : v.isQueued === true
+                ? 'context-guard：日志已落盘，/compact 已排队，会话空闲时执行（已撤不回）'
+                : 'context-guard：日志已落盘，正在压缩'}
+            {v.phase === 'compacting' && v.isQueued !== true && v.message !== null ? `（${v.message}）` : ''}
           </Text>
-          <Button key="cancel" label="取消" dimColor onPress={() => update($, view, old => ({ ...old, phase: 'idle' as const, instructions: null, nonce: null, logTurnId: null }))} />
+          <Button key="cancel" label={v.isQueued === true ? '不要自动恢复' : '取消'} dimColor onPress={() => cancel($)} />
         </Box>
       )
     }

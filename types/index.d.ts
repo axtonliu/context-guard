@@ -26,6 +26,8 @@ export type GuardView = {
   logPath: string | null
   /** What the pending compaction tells the summarizer, held while phase is compacting. */
   instructions: string | null
+  /** Whether the compaction was handed to a queued /compact, which nothing can withdraw. */
+  isQueued?: boolean
   /** The last steps of the flow, newest last, for /context-guard to show. */
   trace: string[]
 }

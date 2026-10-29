@@ -156,6 +156,18 @@ describe('resume', () => {
     expect(text).not.toContain('等我的下一条指令')
   })
 
+  test('keeps the quoted lines that are the log\'s own words', () => {
+    const text = resumePrompt(`${log}\n> 约束：不要动 main 分支，只在 dev 上提交`, '/a/b.md')
+    expect(text).toContain('> 约束：不要动 main 分支，只在 dev 上提交')
+    expect(text).not.toContain('粘贴以下内容')
+  })
+
+  test('a heading inside a code block does not end the section', () => {
+    const text = resumePrompt(`${log}\n\`\`\`bash\n# 先跑测试\nnpm test\n\`\`\`\n- 再提交`, '/a/b.md')
+    expect(text).toContain('# 先跑测试')
+    expect(text).toContain('- 再提交')
+  })
+
   test('stops at the next section', () => {
     expect(resumePrompt(`${log}\n## 附录\n别带上我`, '/a/b.md')).not.toContain('别带上我')
   })
