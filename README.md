@@ -106,6 +106,7 @@ Settings persist across sessions.
 context-guard/
 ├── .claude-plugin/
 │   ├── plugin.json        Plugin manifest
+│   ├── icon.png           Plugin icon
 │   └── marketplace.json   Single-plugin marketplace, for installing from GitHub
 ├── skills/
 │   └── work-log-share/    Bundled log skill (SKILL.md, README, examples)
