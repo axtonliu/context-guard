@@ -11,7 +11,7 @@ A Claude Code mod that warns you before your context fills up, and on one click 
 >
 > - A small prototype I use every day. It works for my sessions, but it has not been tested across every Claude Code version and setup.
 > - The quality of the log depends on the model writing it.
-> - Low-maintenance project. If something breaks, please open an issue with a reproducible case (steps, Claude Code version, CLI or Desktop, and the output of `/context-guard`).
+> - Low-maintenance project. If something breaks, please open an issue with a reproducible case (steps, Claude Code version, CLI or Desktop, and the output of `/context-guard`). That output includes local file paths and the first words of prompts sent while a log was being written, so remove anything private before posting.
 
 ## Why
 
@@ -23,7 +23,7 @@ When the context passes a threshold (75% by default), a band appears above the p
 
 > 上下文已用 X%，做完当前任务后建议写日志并压缩　［写日志并压缩］［稍后］
 
-The band's text is in Chinese (it says "Context is X% used; when you finish the current task, consider writing a log and compacting", with the buttons "Write log and compact" and "Later").
+The band's text is in Chinese (it says "Context is X% used; when you finish the current task, consider writing a log and compacting", with the buttons "Write log and compact" and "Later"). The prompts it sends into the session and the bundled skill are in Chinese too, so the log comes out in Chinese unless you ask for another language.
 
 It only reminds. Nothing happens until you press the button. Each tier (the threshold, then 85 / 90 / 95) is announced once, and 「稍后」 (Later) hides the band until the next tier.
 
@@ -54,6 +54,7 @@ You can also use it on its own: ask Claude to "use work-log-share to write a wor
 ## Privacy and safety
 
 - No network calls of its own and no hidden model calls. It only sends messages into your current session (the log prompt when you press the button, and the resume prompt after compaction) and uses Claude Code's own compaction.
+- The only files it touches are the log it asked for: it checks that the file exists and reads its `## 恢复会话` section. It writes no files itself.
 - `claude plugin validate .` lists every API call the mod makes, so you can check this yourself before installing.
 - Settings are stored locally by Claude Code's plugin store.
 
@@ -130,7 +131,7 @@ claude plugin test .
 
 Contributions are welcome, within a low-maintenance scope:
 
-- Reproducible bug reports (steps, Claude Code version, CLI or Desktop, `/context-guard` output)
+- Reproducible bug reports (steps, Claude Code version, CLI or Desktop, `/context-guard` output with private paths removed)
 - Documentation fixes
 - Small PRs (fixes and docs)
 

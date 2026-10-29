@@ -6,6 +6,8 @@
 
 ## 安装
 
+随 context-guard 插件安装时，这个 skill 已经内置，不用再复制。下面的步骤只用于单独使用它。
+
 下载并解压后，把整个 `work-log-share` 文件夹放进你所使用宿主的 skill 目录。选择一个宿主即可：
 
 - Codex：`~/.agents/skills/work-log-share/SKILL.md`
